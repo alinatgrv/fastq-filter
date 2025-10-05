@@ -1,88 +1,94 @@
-from typing import Optional
+"""
+dna_rna_tools_module.py
+Utilities for working with DNA/RNA sequences.
+"""
 
-# Допустимые символы для последовательностей
+from typing import Union
+
+# Allowed alphabets
 VALID_DNA = set("ATCGatcg")
 VALID_RNA = set("AUCGaucg")
 
-# Таблицы комплементарности
+# Complementarity tables
 COMPLEMENT_DNA = {
-    "A": "T",
-    "T": "A",
-    "C": "G",
-    "G": "C",
-    "a": "t",
-    "t": "a",
-    "c": "g",
-    "g": "c",
+    "A": "T", "T": "A", "C": "G", "G": "C",
+    "a": "t", "t": "a", "c": "g", "g": "c",
 }
 COMPLEMENT_RNA = {
-    "A": "U",
-    "U": "A",
-    "C": "G",
-    "G": "C",
-    "a": "u",
-    "u": "a",
-    "c": "g",
-    "g": "c",
+    "A": "U", "U": "A", "C": "G", "G": "C",
+    "a": "u", "u": "a", "c": "g", "g": "c",
 }
 
-def _seq_type(seq: str) -> Optional[str]:
+
+def detect_seq_type(seq: str) -> Union[str, None]:
     """
-    'DNA' если только ATCG,
-    'RNA' если только AUCG,
-    None если есть посторонние символы или одновременно T и U.
+    Returns:
+      - 'DNA' if the sequence contains only ATCG,
+      - 'RNA' if the sequence contains only AUCG,
+      - None if it has invalid symbols, mixes T and U, or is empty.
     """
-    if not seq:  # строка пустая
+    if not seq:
         return None
 
     symbols = set(seq)
-    # посторонние символы
+
+    # Only DNA/RNA alphabet?
     if not symbols.issubset(VALID_DNA | VALID_RNA):
         return None
-    # смешение T и U недопустимо
-    if (("T" in symbols or "t" in symbols) and ("U" in symbols or "u" in symbols)):
+
+    # Do not allow T and U simultaneously
+    has_t = "T" in symbols or "t" in symbols
+    has_u = "U" in symbols or "u" in symbols
+    if has_t and has_u:
         return None
+
     if symbols.issubset(VALID_DNA):
         return "DNA"
     if symbols.issubset(VALID_RNA):
         return "RNA"
     return None
 
+
 def is_nucleic_acid(seq: str) -> bool:
-    """Возвращает True, если последовательность валидна (DNA или RNA)."""
-    return _seq_type(seq) in ("DNA", "RNA")
+    """True if the sequence is a valid DNA or RNA (no T/U mixing)."""
+    return detect_seq_type(seq) in ("DNA", "RNA")
+
 
 def transcribe(seq: str) -> str:
     """
-    DNA → RNA (T→U), RNA → DNA (U→T). Регистр сохраняется.
-    Бросает ValueError при невалидной последовательности.
+    Transcription preserving case:
+    - DNA → RNA (T→U)
+    - RNA → DNA (U→T)
+    Raises ValueError for invalid sequence.
     """
-    st = _seq_type(seq)
-    if st is None:
+    seq_type = detect_seq_type(seq)
+    if seq_type is None:
         raise ValueError("Invalid sequence for transcription.")
-    if st == "DNA":
+    if seq_type == "DNA":
         return seq.replace("T", "U").replace("t", "u")
-    # RNA
     return seq.replace("U", "T").replace("u", "t")
 
+
 def reverse(seq: str) -> str:
-    """Возвращает развёрнутую последовательность (с проверкой валидности)."""
+    """Return the reversed sequence. Validates input first."""
     if not is_nucleic_acid(seq):
         raise ValueError("Invalid nucleic acid sequence.")
     return seq[::-1]
 
+
 def complement(seq: str) -> str:
-    """Возвращает комплементарную последовательность."""
-    st = _seq_type(seq)
-    if st is None:
+    """Return the complementary sequence (DNA or RNA based on input)."""
+    seq_type = detect_seq_type(seq)
+    if seq_type is None:
         raise ValueError("Invalid nucleic acid sequence.")
-    table = COMPLEMENT_DNA if st == "DNA" else COMPLEMENT_RNA
+    table = COMPLEMENT_DNA if seq_type == "DNA" else COMPLEMENT_RNA
     return "".join(table.get(ch, ch) for ch in seq)
 
+
 def reverse_complement(seq: str) -> str:
-    """Возвращает обратную комплементарную последовательность."""
-    st = _seq_type(seq)
-    if st is None:
+    """Return the reverse-complement sequence."""
+    seq_type = detect_seq_type(seq)
+    if seq_type is None:
         raise ValueError("Invalid nucleic acid sequence.")
-    table = COMPLEMENT_DNA if st == "DNA" else COMPLEMENT_RNA
+    table = COMPLEMENT_DNA if seq_type == "DNA" else COMPLEMENT_RNA
     return "".join(table.get(ch, ch) for ch in reversed(seq))
