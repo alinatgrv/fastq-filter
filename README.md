@@ -1,7 +1,7 @@
 # fastq-filter — bioinformatics utilities (DNA/RNA + FASTQ filtering)
 
 Small educational toolkit:
-- DNA/RNA helpers (`reverse`, `complement`, `reverse_complement`, `transcribe`, validation).
+- DNA/RNA tools (`reverse`, `complement`, `reverse_complement`, `transcribe`, validation).
 - FASTQ read filtering by GC%, length, and mean quality (Phred+33).
 
 > Entry file exposes exactly **two** functions required by the assignment:  
@@ -28,7 +28,7 @@ cd fastq-filter
 
 ## Quick start
 
-### DNA/RNA helpers (facade)
+### DNA/RNA tools
 ```python
 from fastq_filter import run_dna_rna_tools
 
@@ -84,9 +84,4 @@ print(len(res))
 - Python `ord()`: https://docs-python.ru/tutorial/vstroennye-funktsii-interpretatora-python/funktsija-ord/  
 - ASCII table: https://www.asciitable.com/
 
-## Development notes
-
-- English docstrings; descriptive names (no one-letter variables; no leading “_” in function names).
-- Modules keep pure logic; the entry file contains only imports and the two facades (`run_dna_rna_tools`, `filter_fastq`).
-- All intervals are **inclusive**. Type hints throughout.
 
