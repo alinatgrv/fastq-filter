@@ -19,40 +19,34 @@ COMPLEMENT_RNA = {
     "a": "u", "u": "a", "c": "g", "g": "c",
 }
 
+def _has_mixed_tu(symbols: set) -> bool:
+    return (("T" in symbols) or ("t" in symbols)) and (("U" in symbols) or ("u" in symbols))
 
-def detect_seq_type(seq: str) -> Union[str, None]:
-    """
-    Returns:
-      - 'DNA' if the sequence contains only ATCG,
-      - 'RNA' if the sequence contains only AUCG,
-      - None if it has invalid symbols, mixes T and U, or is empty.
-    """
+def is_dna(seq: str) -> bool:
+    """True if the sequence is valid DNA (ATCG only; no U; non-empty)."""
     if not seq:
-        return None
-
+        return False
     symbols = set(seq)
-
-    # Only DNA/RNA alphabet?
     if not symbols.issubset(VALID_DNA | VALID_RNA):
-        return None
+        return False
+    if _has_mixed_tu(symbols):
+        return False
+    return symbols.issubset(VALID_DNA)
 
-    # Do not allow T and U simultaneously
-    has_t = "T" in symbols or "t" in symbols
-    has_u = "U" in symbols or "u" in symbols
-    if has_t and has_u:
-        return None
-
-    if symbols.issubset(VALID_DNA):
-        return "DNA"
-    if symbols.issubset(VALID_RNA):
-        return "RNA"
-    return None
-
+def is_rna(seq: str) -> bool:
+    """True if the sequence is valid RNA (AUCG only; no T; non-empty)."""
+    if not seq:
+        return False
+    symbols = set(seq)
+    if not symbols.issubset(VALID_DNA | VALID_RNA):
+        return False
+    if _has_mixed_tu(symbols):
+        return False
+    return symbols.issubset(VALID_RNA)
 
 def is_nucleic_acid(seq: str) -> bool:
-    """True if the sequence is a valid DNA or RNA (no T/U mixing)."""
-    return detect_seq_type(seq) in ("DNA", "RNA")
-
+    """True if the sequence is valid DNA or RNA (no T/U mixing)."""
+    return is_dna(seq) or is_rna(seq)
 
 def transcribe(seq: str) -> str:
     """
@@ -61,13 +55,11 @@ def transcribe(seq: str) -> str:
     - RNA → DNA (U→T)
     Raises ValueError for invalid sequence.
     """
-    seq_type = detect_seq_type(seq)
-    if seq_type is None:
-        raise ValueError("Invalid sequence for transcription.")
-    if seq_type == "DNA":
+    if is_dna(seq):
         return seq.replace("T", "U").replace("t", "u")
-    return seq.replace("U", "T").replace("u", "t")
-
+    if is_rna(seq):
+        return seq.replace("U", "T").replace("u", "t")
+    raise ValueError("Invalid sequence for transcription.")
 
 def reverse(seq: str) -> str:
     """Return the reversed sequence. Validates input first."""
@@ -75,20 +67,16 @@ def reverse(seq: str) -> str:
         raise ValueError("Invalid nucleic acid sequence.")
     return seq[::-1]
 
-
 def complement(seq: str) -> str:
     """Return the complementary sequence (DNA or RNA based on input)."""
-    seq_type = detect_seq_type(seq)
-    if seq_type is None:
+    if is_dna(seq):
+        table = COMPLEMENT_DNA
+    elif is_rna(seq):
+        table = COMPLEMENT_RNA
+    else:
         raise ValueError("Invalid nucleic acid sequence.")
-    table = COMPLEMENT_DNA if seq_type == "DNA" else COMPLEMENT_RNA
     return "".join(table.get(ch, ch) for ch in seq)
 
-
 def reverse_complement(seq: str) -> str:
-    """Return the reverse-complement sequence."""
-    seq_type = detect_seq_type(seq)
-    if seq_type is None:
-        raise ValueError("Invalid nucleic acid sequence.")
-    table = COMPLEMENT_DNA if seq_type == "DNA" else COMPLEMENT_RNA
-    return "".join(table.get(ch, ch) for ch in reversed(seq))
+    """Return the reverse-complement sequence (DNA/RNA)."""
+    return complement(reverse(seq))

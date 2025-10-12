@@ -3,6 +3,8 @@ from typing import Dict, Tuple, Union
 FastqDict = Dict[str, Tuple[str, str]]
 NumericOrBounds = Union[float, int, Tuple[Union[float, int], Union[float, int]]]
 
+PHRED33_OFFSET = 33
+
 
 def ensure_bounds_tuple(bounds: NumericOrBounds) -> Tuple[float, float]:
     """
@@ -35,30 +37,23 @@ def ensure_bounds_tuple(bounds: NumericOrBounds) -> Tuple[float, float]:
 
 
 def compute_gc_percent(sequence: str) -> float:
-    """
-    Compute GC content percentage for a nucleotide sequence.
-
-    Returns
-    -------
-    float
-        GC% in [0, 100]. Empty sequence -> 0.0.
-    """
+    """Compute GC content (%) for a given sequence."""
     if not sequence:
         return 0.0
-    uppercase_seq = sequence.upper()
-    gc_count = sum(1 for base in uppercase_seq if base in ("G", "C"))
-    return 100.0 * gc_count / len(uppercase_seq)
+    seq = sequence.upper()
+    gc_count = seq.count("G") + seq.count("C")
+    return gc_count / len(seq) * 100
 
 
 def compute_mean_phred33(quality_string: str) -> float:
     """
     Compute mean Phred+33 quality from a FASTQ quality string.
 
-    Each character encodes a quality score Q via:  Q = ord(char) - 33
+    Each character encodes a quality score Q via: Q = ord(char) - 33
     """
     if not quality_string:
         return 0.0
-    total_quality = sum(ord(ch) - 33 for ch in quality_string)
+    total_quality = sum(ord(ch) - PHRED33_OFFSET for ch in quality_string)
     return total_quality / len(quality_string)
 
 
@@ -76,54 +71,37 @@ def filter_reads(
 ) -> FastqDict:
     """
     Filter FASTQ-like records by GC%, read length, and mean quality (Phred+33).
-
-    Input format (FASTQ-like dict)
-    ------------------------------
-    {
-      "read_name": ("SEQUENCE", "QUALITY_STRING"),
-      ...
-    }
-
-    Filters (all conditions must be satisfied)
-    -----------------------------------------
-    1) GC% within `gc_bounds` (inclusive).
-       - If a single number is given, it is treated as upper bound: (0, number).
-    2) Read length within `length_bounds` (inclusive).
-       - If a single number is given, it is treated as upper bound: (0, number).
-    3) Mean quality (Phred+33) >= `quality_threshold`.
-
-    Returns
-    -------
-    dict[name -> (sequence, quality)]
-
-    Raises
-    ------
-    ValueError
-        If a read has sequence and quality of different lengths.
-    TypeError
-        If bounds are provided in unsupported formats.
     """
+    # Normalize bounds once
     gc_interval = ensure_bounds_tuple(gc_bounds)
     length_interval = ensure_bounds_tuple(length_bounds)
+    q_threshold = float(quality_threshold)
 
-    filtered: FastqDict = {}
+    # Local predicates (closed over normalized bounds / threshold)
+    def is_length_ok(sequence: str) -> bool:
+        return value_in_inclusive_bounds(len(sequence), length_interval)
 
-    for read_name, (sequence, quality_string) in seqs.items():
-        if len(sequence) != len(quality_string):
+    def is_gc_ok(sequence: str) -> bool:
+        return value_in_inclusive_bounds(compute_gc_percent(sequence), gc_interval)
+
+    def is_quality_ok(quality: str) -> bool:
+        return compute_mean_phred33(quality) >= q_threshold
+
+    filtered_seqs: FastqDict = {}
+
+    for name, pair in seqs.items():
+        if not isinstance(pair, tuple) or len(pair) != 2:
+            raise ValueError(f"Invalid record for '{name}': expected (sequence, quality_string)")
+
+        sequence, quality = pair
+
+        # Strict length consistency (sequence and quality must align)
+        if len(sequence) != len(quality):
             raise ValueError(
-                f"Length mismatch for read '{read_name}': "
-                f"sequence={len(sequence)}, quality={len(quality_string)}"
+                f"Length mismatch for '{name}': seq={len(sequence)}, qual={len(quality)}"
             )
 
-        read_length = len(sequence)
-        gc_percent = compute_gc_percent(sequence)
-        mean_quality = compute_mean_phred33(quality_string)
+        if is_length_ok(sequence) and is_gc_ok(sequence) and is_quality_ok(quality):
+            filtered_seqs[name] = (sequence, quality)
 
-        passes_gc = value_in_inclusive_bounds(gc_percent, gc_interval)
-        passes_length = value_in_inclusive_bounds(read_length, length_interval)
-        passes_quality = mean_quality >= float(quality_threshold)
-
-        if passes_gc and passes_length and passes_quality:
-            filtered[read_name] = (sequence, quality_string)
-
-    return filtered
+    return filtered_seqs
