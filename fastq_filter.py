@@ -1,208 +1,275 @@
-"""
-Entry point.
+from Bio import SeqIO
+from Bio.SeqUtils import gc_fraction
+import os
+import gzip
+import argparse 
 
-Contains ONLY:
-- imports
-- run_dna_rna_tools(...)
-- filter_fastq(...)
-"""
+# 1: Sequences OOP
 
-from modules.in_out_utils import (
-    iterate_fastq_records,
-    build_safe_output_path,
-    open_output_fastq,
-    write_fastq_record,
-)
-
-from typing import List, Union
-
-# DNA/RNA helpers from the module
-from modules.dna_rna_tools_module import (
-    is_nucleic_acid,
-    transcribe,
-    reverse,
-    complement,
-    reverse_complement,
-)
-
-# FASTQ helper utilities
-from modules.fastq_utils import (
-    compute_gc_percent,
-    compute_mean_phred33,
-    value_in_inclusive_bounds,
-)
-
-# ===== DNA/RNA processing =====
-
-from typing import Iterable, Tuple
-
-def normalize_bounds(bounds_value, default_lower, default_upper) -> Tuple[float, float]:
+class BiologicalSequence:
     """
-    Normalize a scalar or a (lower, upper) sequence to a 2-tuple of floats.
+    Class for biological sequences.
 
-    - If bounds_value is a single number -> treated as upper bound with lower=default_lower.
-    - If bounds_value is a sequence of length >= 2 -> take the first two values.
-    - Otherwise -> fall back to (default_lower, default_upper).
+    Provides:
+    - len(sequence)
+    - indexing and slicing
+    - alphabet validation
+
     """
-    # sequence-like (list/tuple) with 1 or 2+ values
-    if isinstance(bounds_value, (list, tuple)):
-        if len(bounds_value) == 1:
-            return float(default_lower), float(bounds_value[0])
-        if len(bounds_value) >= 2:
-            return float(bounds_value[0]), float(bounds_value[1])
 
-    # scalar case
-    try:
-        upper_value = float(bounds_value)
-        return float(default_lower), upper_value
-    except (TypeError, ValueError):
-        return float(default_lower), float(default_upper)
+    def __init__(self, sequence):
+        if not isinstance(sequence, str):
+            raise TypeError("Sequence must be a string.")
+
+        self._seq = sequence
+        self.check_alphabet()
+
+    def __len__(self):
+        """Return sequence length."""
+        return len(self._seq)
+
+    def __getitem__(self, item):
+        """
+        Support indexing and slicing.
+
+        - If index -> return a single character (str)
+        - If slice -> return a new object of the same class
+        """
+        if isinstance(item, slice):
+            return self.__class__(self._seq[item])
+        return self._seq[item]
+
+    def __str__(self):
+        """Readable string representation."""
+        return f"{self.__class__.__name__}('{self._seq}')"
+
+    def __repr__(self):
+        """Official string representation."""
+        return self.__str__()
+
+    def check_alphabet(self):
+        """
+        Validate alphabet correctness.
+
+        Must be implemented in subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement check_alphabet().")
+
+    @property
+    def sequence(self):
+        """Return raw sequence string."""
+        return self._seq
 
 
-def run_dna_rna_tools(*args: str) -> Union[str, bool, List[Union[str, bool]]]:
+class NucleicAcidSequence(BiologicalSequence):
     """
-    Accepts one or more sequences (str) followed by a procedure name (str).
+    Base class for nucleic acid sequences (DNA and RNA).
 
-    Supported procedures:
-      - 'is_nucleic_acid'     -> bool
-      - 'transcribe'          -> str (DNA↔RNA)
-      - 'reverse'             -> str
-      - 'complement'          -> str
-      - 'reverse_complement'  -> str
+    Implements:
+    - alphabet validation
+    - complement()
+    - reverse()
+    - reverse_complement()
 
-    Returns
-    -------
-    - bool or str for a single sequence
-    - List[bool|str] for multiple sequences
+    Polymorphism realisation:
+    Subclasses define their own alphabet and complement mapping.
     """
-    if not args or len(args) < 2:
-        raise ValueError("Provide at least one sequence and a procedure name.")
 
-    *sequences, proc_name = args
-    procedure = proc_name.strip().lower()
+    _alphabet = None
+    _complement_map = None
 
-    # Function dispatch table instead of if-elif chain
-    dispatch = {
-        "is_nucleic_acid": is_nucleic_acid,
-        "transcribe": transcribe,
-        "reverse": reverse,
-        "complement": complement,
-        "reverse_complement": reverse_complement,
+    def _ensure_configuration(self):
+        """
+        Ensure that subclass defined required attributes.
+
+        Prevents direct usage of NucleicAcidSequence.
+        """
+        if self._alphabet is None or self._complement_map is None:
+            raise NotImplementedError(
+                "Subclasses must define _alphabet and _complement_map."
+            )
+
+    def check_alphabet(self):
+        """Validate that sequence contains only allowed symbols."""
+        self._ensure_configuration()
+
+        for symbol in self._seq:
+            if symbol not in self._alphabet:
+                raise ValueError(
+                    f"Invalid symbol '{symbol}' for {self.__class__.__name__}."
+                )
+        return True
+
+    def complement(self):
+        self._ensure_configuration()
+
+        complemented = []
+        for symbol in self._seq:
+            complemented.append(self._complement_map[symbol])
+
+        return self.__class__("".join(complemented))
+
+    def reverse(self):
+        return self.__class__(self._seq[::-1])
+
+    def reverse_complement(self):
+        return self.reverse().complement()
+
+
+class DNASequence(NucleicAcidSequence):
+    """
+    DNA sequence class.
+    """
+
+    _alphabet = set("ATCGatcg")
+
+    _complement_map = {
+        "A": "T", "T": "A", "C": "G", "G": "C",
+        "a": "t", "t": "a", "c": "g", "g": "c",
     }
 
-    func = dispatch.get(procedure)
-    if func is None:
-        supported = ", ".join(sorted(dispatch.keys()))
-        raise ValueError(f"Unknown procedure: {proc_name!r}. Supported: {supported}")
-
-    if len(sequences) == 1:
-        return func(sequences[0])
-    return [func(s) for s in sequences]
+    def transcribe(self):
+        """
+        Transcribe DNA to RNA (T -> U).
+        """
+        rna_sequence = self._seq.replace("T", "U").replace("t", "u")
+        return RNASequence(rna_sequence)
 
 
-# ===== FASTQ processing =====
+class RNASequence(NucleicAcidSequence):
+    """
+    RNA sequence class.
+    """
+
+    _alphabet = set("AUCGaucg")
+
+    _complement_map = {
+        "A": "U", "U": "A", "C": "G", "G": "C",
+        "a": "u", "u": "a", "c": "g", "g": "c",
+    }
+
+
+class AminoAcidSequence(BiologicalSequence):
+    """
+    Amino acid sequence class.
+
+    Supports validation of standard 20 amino acids.
+    """
+
+    _alphabet = set("ACDEFGHIKLMNPQRSTVWY")
+
+    def check_alphabet(self):
+        """Validate amino acid alphabet."""
+        for symbol in self._seq:
+            if symbol not in self._alphabet:
+                raise ValueError(
+                    f"Invalid symbol '{symbol}' for AminoAcidSequence."
+                )
+        return True
+
+    def aa_composition(self):
+        """
+        Calculate amino acid composition.
+
+        Returns: 
+        dict
+            Dictionary of amino acid frequencies (fractions).
+        """
+        if len(self._seq) == 0:
+            return {}
+
+        counts = {}
+        for symbol in self._seq:
+            counts[symbol] = counts.get(symbol, 0) + 1
+
+        total_length = len(self._seq)
+
+        frequencies = {}
+        for aa in counts:
+            frequencies[aa] = counts[aa] / total_length
+
+        return frequencies
+
+
+
+# 2: FASTQ filter with Biopython
+
+
+def open_maybe_gzip(path, mode):
+    if str(path).endswith(".gz"):
+        return gzip.open(path, mode, encoding="utf-8")
+    return open(path, mode, encoding="utf-8")
+
 
 def filter_fastq(
-    input_fastq_path: str,
-    output_fastq_name: str,
-    gc_bounds: Union[float, tuple[float, float]] = (0.0, 100.0),
-    length_bounds: Union[int, tuple[int, int]] = (0, 2**32),
-    quality_threshold: float = 0.0,
-    force_overwrite: bool = False,
-) -> tuple[int, int, str]:
+    input_fastq_path,
+    output_fastq_name,
+    gc_bounds=(0.0, 100.0),
+    length_bounds=(0, 2**32),
+    quality_threshold=0.0,
+    force_overwrite=False,
+):
     """
-    Stream-filter an input FASTQ and write passing records to an output FASTQ.
-
-    The function:
-    - normalizes bounds (GC% and length) using helper utilities,
-    - computes metrics per record (GC%, length, mean Phred+33),
-    - writes passing records immediately to avoid storing the whole file in memory.
-
-    Parameters
-    ----------
-    input_fastq_path : str
-        Path to the input FASTQ (or FASTQ.GZ) file.
-    output_fastq_name : str
-        File name for the output FASTQ written into the 'filtered' directory.
-    gc_bounds : Union[float, tuple[float, float]], optional
-        Inclusive GC% bounds. Either a single upper bound (lower=0) or a (lower, upper) tuple.
-    length_bounds : Union[int, tuple[int, int]], optional
-        Inclusive length bounds. Either a single upper bound (lower=0) or a (lower, upper) tuple.
-    quality_threshold : float, optional
-        Minimum mean Phred+33 quality to keep a read.
-    force_overwrite : bool, optional
-        If True, allow overwriting existing files. Otherwise a numeric suffix is added.
-
-    Returns
-    -------
-    tuple[int, int, str]
-        (kept_count, total_count, saved_output_path)
+    Filter FASTQ using Biopython objects (SeqIO, SeqRecord, SeqUtils).
     """
-    # 1) Normalize bounds using existing helpers from fastq_utils.py
-    gc_interval = normalize_bounds(gc_bounds, 0.0, 100.0)
-    length_interval = normalize_bounds(length_bounds, 0, 2**32)
 
-    # 2) Prepare safe output path inside 'filtered/'
-    output_path = build_safe_output_path(
-        file_name=output_fastq_name,
-        directory="filtered",
-        force=force_overwrite,
-    )
+    gc_lower, gc_upper = gc_bounds
+    len_lower, len_upper = length_bounds
 
-    kept_count = 0
-    total_count = 0
+    os.makedirs("filtered", exist_ok=True)
+    output_path = os.path.join("filtered", output_fastq_name)
 
-    # 3) Stream records: read → check → write (if passed)
-    with open_output_fastq(output_path) as output_handle:
-        for header_line, sequence_line, plus_line, qualities_line in iterate_fastq_records(input_fastq_path):
-            total_count += 1
+    if os.path.exists(output_path) and not force_overwrite:
+        raise FileExistsError(
+            f"{output_path} already exists. Use --force to overwrite."
+        )
 
-            read_length = len(sequence_line)
-            gc_percent = compute_gc_percent(sequence_line)
-            mean_quality = compute_mean_phred33(qualities_line)
+    kept = 0
+    total = 0
 
-            passes_gc = value_in_inclusive_bounds(gc_percent, gc_interval)
-            passes_length = value_in_inclusive_bounds(read_length, length_interval)
-            passes_quality = mean_quality >= float(quality_threshold)
+    with open_maybe_gzip(input_fastq_path, "rt") as in_handle, \
+         open_maybe_gzip(output_path, "wt") as out_handle:
 
-            if passes_gc and passes_length and passes_quality:
-                write_fastq_record(
-                    output_handle,
-                    (header_line, sequence_line, plus_line, qualities_line),
-                )
-                kept_count += 1
+        for record in SeqIO.parse(in_handle, "fastq"):
+            total += 1
 
-    return kept_count, total_count, str(output_path)
+            seq_length = len(record.seq)
+            gc_percent = gc_fraction(record.seq) * 100
+            qualities = record.letter_annotations["phred_quality"]
+            mean_quality = sum(qualities) / len(qualities)
 
-if __name__ == "__main__":
-    import argparse
+            if (
+                gc_lower <= gc_percent <= gc_upper
+                and len_lower <= seq_length <= len_upper
+                and mean_quality >= quality_threshold
+            ):
+                SeqIO.write(record, out_handle, "fastq")
+                kept += 1
 
+    return kept, total, output_path
+
+# CLI
+
+def main():
     parser = argparse.ArgumentParser(
-        description="Filter FASTQ and write passing records to 'filtered/'."
+        description="Filter FASTQ/FASTQ.GZ and write passing reads to 'filtered/'."
     )
-    parser.add_argument(
-        "--input_fastq",
-        required=True,
-        help="Path to input FASTQ or FASTQ.GZ file.",
-    )
-    parser.add_argument(
-        "--output_fastq",
-        required=True,
-        help="Output FASTQ file name 'filtered/'.",
-    )
+    parser.add_argument("--input_fastq", required=True, help="Input FASTQ or FASTQ.GZ path.")
+    parser.add_argument("--output_fastq", required=True, help="Output file name (inside filtered/).")
+
     parser.add_argument(
         "--gc_bounds",
         nargs="+",
         type=float,
         default=[0.0, 100.0],
-        help="GC%% bounds: give one value (upper) or two values (lower upper).",
+        help="GC%% bounds: provide 1 value (upper) or 2 values (lower upper).",
     )
     parser.add_argument(
         "--length_bounds",
         nargs="+",
         type=int,
-        default=[0, 4294967296],
-        help="Length bounds: one value (upper) or two values (lower upper).",
+        default=[0, 2**32],
+        help="Length bounds: provide 1 value (upper) or 2 values (lower upper).",
     )
     parser.add_argument(
         "--quality_threshold",
@@ -210,25 +277,14 @@ if __name__ == "__main__":
         default=0.0,
         help="Minimum mean Phred+33 quality to keep a read.",
     )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Allow overwriting existing output file name.",
-    )
+    parser.add_argument("--force", action="store_true", help="Allow overwriting output file.")
 
     args = parser.parse_args()
 
-    if len(args.gc_bounds) == 1:
-        gc_arg = args.gc_bounds[0]
-    else:
-        gc_arg = (args.gc_bounds[0], args.gc_bounds[1])
+    gc_arg = args.gc_bounds[0] if len(args.gc_bounds) == 1 else (args.gc_bounds[0], args.gc_bounds[1])
+    length_arg = args.length_bounds[0] if len(args.length_bounds) == 1 else (args.length_bounds[0], args.length_bounds[1])
 
-    if len(args.length_bounds) == 1:
-        length_arg = args.length_bounds[0]
-    else:
-        length_arg = (args.length_bounds[0], args.length_bounds[1])
-
-    kept_count, total_count, saved_path = filter_fastq(
+    kept, total, out_path = filter_fastq(
         input_fastq_path=args.input_fastq,
         output_fastq_name=args.output_fastq,
         gc_bounds=gc_arg,
@@ -236,4 +292,9 @@ if __name__ == "__main__":
         quality_threshold=args.quality_threshold,
         force_overwrite=args.force,
     )
-    print(f"Kept {kept_count} / {total_count} reads. Saved to: {saved_path}")
+
+    print(f"Kept {kept} / {total} reads. Saved to: {out_path}")
+
+
+if __name__ == "__main__":
+    main()

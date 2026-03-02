@@ -4,3 +4,7 @@ __pycache__/
 filtered/
 *.fastq
 *.fastq.gz
+
+__pycache__/
+filtered/
+*.pyc
