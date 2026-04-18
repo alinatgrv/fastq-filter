@@ -8,3 +8,4 @@ filtered/
 __pycache__/
 filtered/
 *.pyc
+.Rhistory
