@@ -3,6 +3,7 @@ from Bio.SeqUtils import gc_fraction
 import os
 import gzip
 import argparse 
+import logging
 
 # 1: Sequences OOP
 
@@ -195,6 +196,21 @@ class AminoAcidSequence(BiologicalSequence):
 # 2: FASTQ filter with Biopython
 
 
+def setup_logger(log_file="fastq_filter.log"):
+    logger = logging.getLogger("fastq_filter_logger")
+    logger.setLevel(logging.INFO)
+
+    if not logger.handlers:
+        file_handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
+
+
 def open_maybe_gzip(path, mode):
     if str(path).endswith(".gz"):
         return gzip.open(path, mode, encoding="utf-8")
@@ -208,10 +224,16 @@ def filter_fastq(
     length_bounds=(0, 2**32),
     quality_threshold=0.0,
     force_overwrite=False,
+    logger=None,
 ):
     """
     Filter FASTQ using Biopython objects (SeqIO, SeqRecord, SeqUtils).
     """
+
+    if logger:
+        logger.info(
+            f"Starting FASTQ filtering: input={input_fastq_path}, output={output_fastq_name}"
+        )
 
     gc_lower, gc_upper = gc_bounds
     len_lower, len_upper = length_bounds
@@ -220,37 +242,52 @@ def filter_fastq(
     output_path = os.path.join("filtered", output_fastq_name)
 
     if os.path.exists(output_path) and not force_overwrite:
-        raise FileExistsError(
-            f"{output_path} already exists. Use --force to overwrite."
-        )
+        message = f"{output_path} already exists. Use --force to overwrite."
+        if logger:
+            logger.error(message)
+        raise FileExistsError(message)
 
     kept = 0
     total = 0
 
-    with open_maybe_gzip(input_fastq_path, "rt") as in_handle, \
-         open_maybe_gzip(output_path, "wt") as out_handle:
+    try:
+        with open_maybe_gzip(input_fastq_path, "rt") as in_handle, \
+             open_maybe_gzip(output_path, "wt") as out_handle:
 
-        for record in SeqIO.parse(in_handle, "fastq"):
-            total += 1
+            for record in SeqIO.parse(in_handle, "fastq"):
+                total += 1
 
-            seq_length = len(record.seq)
-            gc_percent = gc_fraction(record.seq) * 100
-            qualities = record.letter_annotations["phred_quality"]
-            mean_quality = sum(qualities) / len(qualities)
+                seq_length = len(record.seq)
+                gc_percent = gc_fraction(record.seq) * 100
+                qualities = record.letter_annotations["phred_quality"]
+                mean_quality = sum(qualities) / len(qualities)
 
-            if (
-                gc_lower <= gc_percent <= gc_upper
-                and len_lower <= seq_length <= len_upper
-                and mean_quality >= quality_threshold
-            ):
-                SeqIO.write(record, out_handle, "fastq")
-                kept += 1
+                if (
+                    gc_lower <= gc_percent <= gc_upper
+                    and len_lower <= seq_length <= len_upper
+                    and mean_quality >= quality_threshold
+                ):
+                    SeqIO.write(record, out_handle, "fastq")
+                    kept += 1
+
+    except Exception as error:
+        if logger:
+            logger.error(f"Filtering failed: {error}")
+        raise
+
+    if logger:
+        logger.info(
+            f"Filtering finished successfully: kept {kept} of {total} reads. Saved to {output_path}"
+        )
 
     return kept, total, output_path
+
 
 # CLI
 
 def main():
+    logger = setup_logger()
+
     parser = argparse.ArgumentParser(
         description="Filter FASTQ/FASTQ.GZ and write passing reads to 'filtered/'."
     )
@@ -284,16 +321,22 @@ def main():
     gc_arg = args.gc_bounds[0] if len(args.gc_bounds) == 1 else (args.gc_bounds[0], args.gc_bounds[1])
     length_arg = args.length_bounds[0] if len(args.length_bounds) == 1 else (args.length_bounds[0], args.length_bounds[1])
 
-    kept, total, out_path = filter_fastq(
-        input_fastq_path=args.input_fastq,
-        output_fastq_name=args.output_fastq,
-        gc_bounds=gc_arg,
-        length_bounds=length_arg,
-        quality_threshold=args.quality_threshold,
-        force_overwrite=args.force,
-    )
+    try:
+        kept, total, out_path = filter_fastq(
+            input_fastq_path=args.input_fastq,
+            output_fastq_name=args.output_fastq,
+            gc_bounds=gc_arg,
+            length_bounds=length_arg,
+            quality_threshold=args.quality_threshold,
+            force_overwrite=args.force,
+            logger=logger,
+        )
+        print(f"Kept {kept} / {total} reads. Saved to: {out_path}")
 
-    print(f"Kept {kept} / {total} reads. Saved to: {out_path}")
+    except Exception as error:
+        logger.error(f"Program terminated with error: {error}")
+        print(f"Error: {error}")
+        raise
 
 
 if __name__ == "__main__":
