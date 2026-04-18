@@ -9,3 +9,6 @@ __pycache__/
 filtered/
 *.pyc
 .Rhistory
+
+.pytest_cache/
+fastq_filter.log
